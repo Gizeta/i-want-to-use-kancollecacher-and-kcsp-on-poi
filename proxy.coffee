@@ -290,6 +290,7 @@ class HackableProxy
         remote.destroy()
     @server.on 'error', (err) =>
       error err
+    @server.timeout = 40 * 60 * 1000
     webview = $('kan-game webview')
     handleStopLoading = =>
       webview.removeEventListener 'did-stop-loading', handleStopLoading
