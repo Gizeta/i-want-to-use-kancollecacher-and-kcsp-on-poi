@@ -128,6 +128,7 @@ class HackableProxy
             headers: req.headers
             encoding: null
             followRedirect: false
+            timeout: 30000
           # Add body to request
           if reqBody.length > 0
             options = _.extend options,
