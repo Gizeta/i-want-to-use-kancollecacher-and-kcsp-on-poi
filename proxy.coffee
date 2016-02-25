@@ -112,7 +112,7 @@ class HackableProxy
       # Disable HTTP Keep-Alive
       req.headers['connection'] = 'close'
       parsed = url.parse req.url
-      isGameApi = parsed.pathname.startsWith '/kcsapi'
+      isGameApi = parsed.pathname.startsWith('/kcsapi') && req.method == 'POST'
       cacheFile = null
       if isStaticResource(parsed.pathname)
         cacheFile = findHack(parsed.pathname) || findCache(parsed.pathname)
@@ -128,7 +128,7 @@ class HackableProxy
             headers: req.headers
             encoding: null
             followRedirect: false
-            timeout: 30000
+            timeout: if isGameApi then 5000 else 120000
           # Add body to request
           if reqBody.length > 0
             options = _.extend options,
@@ -158,9 +158,7 @@ class HackableProxy
             kcspHost = config.get 'plugin.iwukkp.kcsp.host', ''
             kcspPort = config.get 'plugin.iwukkp.kcsp.port', ''
             if useKcsp && kcspHost isnt '' && kcspPort isnt ''
-              kcspRetries = 600
-              options = _.extend options,
-                'timeout': 3000
+              kcspRetries = 500
               options.headers['request-uri'] = options.url
               options.headers['cache-token'] = uuid.v4()
               options.url = options.url.replace(/:\/\/(.+?)\//, "://#{kcspHost}:#{kcspPort}/")
