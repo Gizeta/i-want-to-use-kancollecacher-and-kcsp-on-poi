@@ -2,7 +2,8 @@
 {Grid, Input, Col, Button} = ReactBootstrap
 {config} = window
 
-window.proxy = require './proxy'
+if config.get('plugin.iwukkp.enable', true)
+  window.proxy = require './proxy'
 
 module.exports =
   name: 'iwukkp'
