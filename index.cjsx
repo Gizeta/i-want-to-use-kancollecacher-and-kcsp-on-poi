@@ -3,7 +3,7 @@
 {config} = window
 
 if config.get('plugin.iwukkp.enable', true)
-  window.proxy = require './proxy'
+  require('./proxy')()
 
 module.exports =
   name: 'iwukkp'
