@@ -19,6 +19,7 @@ module.exports =
       enableKcsp: config.get 'plugin.iwukkp.kcsp.enabled', false
       kcspHost: config.get 'plugin.iwukkp.kcsp.host', ''
       kcspPort: config.get 'plugin.iwukkp.kcsp.port', ''
+      modifyGraph: config.get 'plugin.iwukkp.shipgraph.enable', false
     handleSetKcspEnabled: ->
       {enableKcsp} = @state
       config.set 'plugin.iwukkp.kcsp.enabled', !enableKcsp
@@ -34,18 +35,28 @@ module.exports =
       config.set 'plugin.iwukkp.kcsp.port', value
       @setState
         kcspPort: value
+    handleModifyGraph: ->
+      {modifyGraph} = @state
+      config.set 'plugin.iwukkp.shipgraph.enable', !modifyGraph
+      @setState
+        modifyGraph: !modifyGraph
     render: ->
       <div className="form-group">
         <Grid>
-          <Col xs={6}>
-            <Input type="text" label="kcsp服务器地址" placeholder="地址" value={@state?.kcspHost} onChange={@handleKcspHostChange} />
+          <Col xs={5}>
+            <Input type="text" placeholder="kcsp服务器地址" value={@state?.kcspHost} onChange={@handleKcspHostChange} />
           </Col>
-          <Col xs={6}>
-            <Input type="text" label="端口" placeholder="端口" value={@state?.kcspPort} onChange={@handleKcspPortChange} />
+          <Col xs={3}>
+            <Input type="text" placeholder="端口" value={@state?.kcspPort} onChange={@handleKcspPortChange} />
           </Col>
-          <Col xs={6}>
+          <Col xs={4}>
             <Button bsStyle={if @state.enableKcsp then 'success' else 'danger'} onClick={@handleSetKcspEnabled} style={width: '100%'}>
               {if @state.enableKcsp then '√ ' else ''}开启防猫
+            </Button>
+          </Col>
+          <Col xs={6}>
+            <Button bsStyle={if @state.modifyGraph then 'success' else 'danger'} onClick={@handleModifyGraph} style={width: '100%'}>
+              {if @state.modifyGraph then '√ ' else ''}开启立绘坐标魔改
             </Button>
           </Col>
         </Grid>

@@ -98,6 +98,23 @@ resolve = (req) ->
     else
       return req
 
+# Modify api_start2 response
+modifyShipGraph = (resolvedBody) ->
+  modFile = findCache('ApiModify.json')
+  return unless modFile
+  modData = require modFile
+  for data in modData
+    shipGraph = _.find resolvedBody.api_data.api_mst_shipgraph, (e) -> e.api_filename == data.api_filename
+    continue if shipGraph == null
+    ship = _.find resolvedBody.api_data.api_mst_ship, (e) -> e.api_id == shipGraph.api_id
+    for key of data
+      continue if key == 'api_id' || key == 'api_filename'
+      continue if shipGraph[key] = null
+      shipGraph[key] = data[key]
+    ship.api_name = data.api_name unless data.api_name == null
+    ship.api_getmes = data.api_getmes unless data.api_getmes == null
+  return resolvedBody
+
 module.exports = ->
   server = http.createServer (req, res) ->
     delete req.headers['proxy-connection']
@@ -161,10 +178,14 @@ module.exports = ->
                 proxy.emit 'game.on.request', req.method, parsed.pathname, JSON.stringify(querystring.parse reqBody.toString())
                 # Create remote request
                 [response, body] = yield requestAsync resolve options
-                res.writeHead response.statusCode, response.headers
-                res.end body
                 # Emit response events to plugins
                 resolvedBody = yield resolveBody response.headers['content-encoding'], body
+                if parsed.pathname == '/kcsapi/api_start2' && config.get('plugin.iwukkp.shipgraph.enable', false)
+                  resolvedBody = modifyShipGraph resolvedBody
+                  body = 'svdata=' + JSON.stringify(resolvedBody)
+                  response.headers['content-encoding'] = ''
+                res.writeHead response.statusCode, response.headers
+                res.end body
                 if !resolvedBody?
                   throw new Error('Empty Body')
                 if response.statusCode == 200
@@ -189,10 +210,14 @@ module.exports = ->
                 # Create remote request
                 [response, body] = yield requestAsync resolve options
                 success = true
-                res.writeHead response.statusCode, response.headers
-                res.end body
                 # Emit response events to plugins
                 resolvedBody = yield resolveBody response.headers['content-encoding'], body
+                if parsed.pathname == '/kcsapi/api_start2' && config.get('plugin.iwukkp.shipgraph.enable', false)
+                  resolvedBody = modifyShipGraph resolvedBody
+                  body = 'svdata=' + JSON.stringify(resolvedBody)
+                  response.headers['content-encoding'] = ''
+                res.writeHead response.statusCode, response.headers
+                res.end body
                 if !resolvedBody?
                   throw new Error('Empty Body')
                 if response.statusCode == 200
