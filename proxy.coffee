@@ -19,7 +19,6 @@ uuid = require 'node-uuid'
 {log, warn, error} = remote.require './lib/utils'
 {_, $, config, proxy} = window
 
-originProxy = proxy.server
 webview = $('kan-game webview')
 
 resolveBody = (encoding, body) ->
@@ -121,6 +120,7 @@ modifyShipGraph = (resolvedBody) ->
 class HackableProxy
   constructor: ->
     @load()
+    @listenPort = proxy.port
   load: ->
     @server = http.createServer (req, res) ->
       delete req.headers['proxy-connection']
@@ -313,23 +313,23 @@ class HackableProxy
     @server.on 'error', (err) ->
       error err
     @server.timeout = 40 * 60 * 1000
+  startup: ->
+    proxy.server.close()
+    proxy.server = @server
+    @server.listen @listenPort, '127.0.0.1', ->
+      log "Hackable proxy started."
   start: ->
-    handleStopLoading = =>
-      webview.removeEventListener 'did-stop-loading', handleStopLoading
-      listenPort = originProxy.address().port
-      originProxy.close()
-      proxy.server = @server
-      @server.listen listenPort, '127.0.0.1', ->
-        log "Hackable proxy started."
-    webview.addEventListener 'did-stop-loading', handleStopLoading
+    if webview.isLoading()
+      handleStopLoading = =>
+        webview.removeEventListener 'did-stop-loading', handleStopLoading
+        @startup()
+      webview.addEventListener 'did-stop-loading', handleStopLoading
+    else
+      @startup()
   stop: ->
-    handleStopLoading = =>
-      webview.removeEventListener 'did-stop-loading', handleStopLoading
-      listenPort = @server.address().port
-      @server.close()
-      proxy.server = originProxy
-      originProxy.listen listenPort, '127.0.0.1', ->
-        log "Origin proxy started."
-    webview.addEventListener 'did-stop-loading', handleStopLoading
+    @server.close()
+    proxy.load().close()
+    proxy.server.listen @listenPort, '127.0.0.1', ->
+      log "Origin proxy started."
 
 module.exports = new HackableProxy()

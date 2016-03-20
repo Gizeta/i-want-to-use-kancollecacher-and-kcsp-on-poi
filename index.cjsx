@@ -1,6 +1,6 @@
 {_, $, $$, React, ReactBootstrap} = window
 {Grid, Input, Col, Row, Button} = ReactBootstrap
-{config, proxy, POI_VERSION} = window
+{config, POI_VERSION} = window
 
 proxy = require './proxy'
 
