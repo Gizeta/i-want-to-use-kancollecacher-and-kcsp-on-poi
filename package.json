@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "description": "i want to use kancollecacher and kcsp on poi",
   "main": "index.cjsx",
-  "author": "Gizeta",
+  "author": {
+    "name": "Gizeta",
+    "url": "https://github.com/Gizeta"
+  },
   "license": "MIT",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -22,5 +25,12 @@
   "homepage": "https://github.com/Gizeta/i-want-to-use-kancollecacher-and-kcsp-on-poi",
   "dependencies": {
     "node-uuid": "^1.4.7"
+  },
+  "poiPlugin": {
+    "title": "iwukkp",
+    "id": "iwukkp",
+    "icon": "fa/eye",
+    "description": "Hack as much as the author needs.",
+    "priority": 794
   }
 }

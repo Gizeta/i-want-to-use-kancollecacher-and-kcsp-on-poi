@@ -1,15 +1,21 @@
 {_, $, $$, React, ReactBootstrap} = window
-{Grid, Input, Col, Button} = ReactBootstrap
-{config} = window
+{Grid, Input, Col, Row, Button} = ReactBootstrap
+{config, proxy, POI_VERSION} = window
 
-if config.get('plugin.iwukkp.enable', true)
-  require('./proxy')()
+proxy = require './proxy'
+
+if POI_VERSION.match(/^[0-5]\./) && config.get('plugin.iwukkp.enable', true)
+  proxy.start()
 
 module.exports =
+  pluginDidLoad: (e) ->
+    proxy.start()
+  pluginWillUnload: (e) ->
+    proxy.stop()
   name: 'iwukkp'
   priority: 794
   displayName: <span><FontAwesome name='eye' /> IWUKKP</span>
-  description: 'i want to use kancollecacher and kcsp on poi'
+  description: 'Hack as much as the author needs.'
   author: 'Gizeta'
   link: 'https://github.com/Gizeta'
   version: '0.1.0'
@@ -43,21 +49,27 @@ module.exports =
     render: ->
       <div className="form-group">
         <Grid>
-          <Col xs={5}>
-            <Input type="text" placeholder="kcsp服务器地址" value={@state?.kcspHost} onChange={@handleKcspHostChange} />
-          </Col>
-          <Col xs={3}>
-            <Input type="text" placeholder="端口" value={@state?.kcspPort} onChange={@handleKcspPortChange} />
-          </Col>
-          <Col xs={4}>
-            <Button bsStyle={if @state.enableKcsp then 'success' else 'danger'} onClick={@handleSetKcspEnabled} style={width: '100%'}>
-              {if @state.enableKcsp then '√ ' else ''}开启防猫
-            </Button>
-          </Col>
-          <Col xs={6}>
-            <Button bsStyle={if @state.modifyGraph then 'success' else 'danger'} onClick={@handleModifyGraph} style={width: '100%'}>
-              {if @state.modifyGraph then '√ ' else ''}开启立绘坐标魔改
-            </Button>
-          </Col>
+          <Row>
+            <Col xs={6}>
+              <Input type="text" placeholder="kcsp服务器地址" value={@state?.kcspHost} onChange={@handleKcspHostChange} />
+            </Col>
+            <Col xs={6}>
+              <Input type="text" placeholder="端口" value={@state?.kcspPort} onChange={@handleKcspPortChange} />
+            </Col>
+          </Row>
+          <Row>
+            <Col xs={6}>
+              <Button bsStyle={if @state.enableKcsp then 'success' else 'danger'} onClick={@handleSetKcspEnabled} style={width: '100%'}>
+                {if @state.enableKcsp then '√ ' else ''}开启防猫
+              </Button>
+            </Col>
+          </Row>
+          <Row style={{ marginTop: 7 }}>
+            <Col xs={6}>
+              <Button bsStyle={if @state.modifyGraph then 'success' else 'danger'} onClick={@handleModifyGraph} style={width: '100%'}>
+                {if @state.modifyGraph then '√ ' else ''}开启立绘坐标魔改
+              </Button>
+            </Col>
+          </Row>
         </Grid>
       </div>

@@ -19,6 +19,9 @@ uuid = require 'node-uuid'
 {log, warn, error} = remote.require './lib/utils'
 {_, $, config, proxy} = window
 
+originProxy = proxy.server
+webview = $('kan-game webview')
+
 resolveBody = (encoding, body) ->
   return new Promise async (resolve, reject) ->
     try
@@ -115,204 +118,218 @@ modifyShipGraph = (resolvedBody) ->
     ship.api_getmes = data.api_getmes unless data.api_getmes == null
   return resolvedBody
 
-module.exports = ->
-  server = http.createServer (req, res) ->
-    delete req.headers['proxy-connection']
-    # Disable HTTP Keep-Alive
-    req.headers['connection'] = 'close'
-    parsed = url.parse req.url
-    isGameApi = parsed.pathname.startsWith('/kcsapi') && req.method == 'POST'
-    cacheFile = null
-    if isStaticResource(parsed.pathname)
-      cacheFile = findHack(parsed.pathname) || findCache(parsed.pathname)
-    reqBody = new Buffer(0)
-    # Get all request body
-    req.on 'data', (data) ->
-      reqBody = Buffer.concat [reqBody, data]
-    req.on 'end', async ->
-      try
-        options =
-          method: req.method
-          url: req.url
-          headers: req.headers
-          encoding: null
-          followRedirect: false
-          timeout: if isGameApi then 5000 else 120000
-        # Add body to request
-        if reqBody.length > 0
-          options = _.extend options,
-            body: reqBody
-        # Use cache file
-        if cacheFile
-          stats = yield fs.statAsync cacheFile
-          # Cache is new
-          if req.headers['if-modified-since']? && (new Date(req.headers['if-modified-since']) >= stats.mtime)
-            res.writeHead 304,
-              'Server': 'nginx'
-              'Last-Modified': stats.mtime.toGMTString()
-            res.end()
-          # Cache is old
-          else
-            data = yield fs.readFileAsync cacheFile
-            res.writeHead 200,
-              'Server': 'nginx'
-              'Content-Length': data.length
-              'Content-Type': mime.lookup cacheFile
-              'Last-Modified': stats.mtime.toGMTString()
-            res.end data
-        # Enable retry for game api
-        else if isGameApi
-          success = false
-          useKcsp = config.get 'plugin.iwukkp.kcsp.enabled', false
-          kcspHost = config.get 'plugin.iwukkp.kcsp.host', ''
-          kcspPort = config.get 'plugin.iwukkp.kcsp.port', ''
-          if useKcsp && kcspHost isnt '' && kcspPort isnt ''
-            kcspRetries = 500
-            options.headers['request-uri'] = options.url
-            options.headers['cache-token'] = uuid.v4()
-            options.url = options.url.replace(/:\/\/(.+?)\//, "://#{kcspHost}:#{kcspPort}/")
-            for i in [0..kcspRetries]
-              break if success
-              try
-                # Emit request event to plugins
-                proxy.emit 'game.on.request', req.method, parsed.pathname, JSON.stringify(querystring.parse reqBody.toString())
-                # Create remote request
-                [response, body] = yield requestAsync resolve options
-                # Emit response events to plugins
-                resolvedBody = yield resolveBody response.headers['content-encoding'], body
-                if parsed.pathname == '/kcsapi/api_start2' && config.get('plugin.iwukkp.shipgraph.enable', false)
-                  resolvedBody = modifyShipGraph resolvedBody
-                  body = 'svdata=' + JSON.stringify(resolvedBody)
-                  response.headers['content-encoding'] = ''
-                res.writeHead response.statusCode, response.headers
-                res.end body
-                if !resolvedBody?
-                  throw new Error('Empty Body')
-                if response.statusCode == 200
+class HackableProxy
+  constructor: ->
+    @load()
+  load: ->
+    @server = http.createServer (req, res) ->
+      delete req.headers['proxy-connection']
+      # Disable HTTP Keep-Alive
+      req.headers['connection'] = 'close'
+      parsed = url.parse req.url
+      isGameApi = parsed.pathname.startsWith('/kcsapi') && req.method == 'POST'
+      cacheFile = null
+      if isStaticResource(parsed.pathname)
+        cacheFile = findHack(parsed.pathname) || findCache(parsed.pathname)
+      reqBody = new Buffer(0)
+      # Get all request body
+      req.on 'data', (data) ->
+        reqBody = Buffer.concat [reqBody, data]
+      req.on 'end', async ->
+        try
+          options =
+            method: req.method
+            url: req.url
+            headers: req.headers
+            encoding: null
+            followRedirect: false
+            timeout: if isGameApi then 5000 else 120000
+          # Add body to request
+          if reqBody.length > 0
+            options = _.extend options,
+              body: reqBody
+          # Use cache file
+          if cacheFile
+            stats = yield fs.statAsync cacheFile
+            # Cache is new
+            if req.headers['if-modified-since']? && (new Date(req.headers['if-modified-since']) >= stats.mtime)
+              res.writeHead 304,
+                'Server': 'nginx'
+                'Last-Modified': stats.mtime.toGMTString()
+              res.end()
+            # Cache is old
+            else
+              data = yield fs.readFileAsync cacheFile
+              res.writeHead 200,
+                'Server': 'nginx'
+                'Content-Length': data.length
+                'Content-Type': mime.lookup cacheFile
+                'Last-Modified': stats.mtime.toGMTString()
+              res.end data
+          # Enable retry for game api
+          else if isGameApi
+            success = false
+            useKcsp = config.get 'plugin.iwukkp.kcsp.enabled', false
+            kcspHost = config.get 'plugin.iwukkp.kcsp.host', ''
+            kcspPort = config.get 'plugin.iwukkp.kcsp.port', ''
+            if useKcsp && kcspHost isnt '' && kcspPort isnt ''
+              kcspRetries = 500
+              options.headers['request-uri'] = options.url
+              options.headers['cache-token'] = uuid.v4()
+              options.url = options.url.replace(/:\/\/(.+?)\//, "://#{kcspHost}:#{kcspPort}/")
+              for i in [0..kcspRetries]
+                break if success
+                try
+                  # Emit request event to plugins
+                  proxy.emit 'game.on.request', req.method, parsed.pathname, JSON.stringify(querystring.parse reqBody.toString())
+                  # Create remote request
+                  [response, body] = yield requestAsync resolve options
+                  # Emit response events to plugins
+                  resolvedBody = yield resolveBody response.headers['content-encoding'], body
+                  if parsed.pathname == '/kcsapi/api_start2' && config.get('plugin.iwukkp.shipgraph.enable', false)
+                    resolvedBody = modifyShipGraph resolvedBody
+                    body = 'svdata=' + JSON.stringify(resolvedBody)
+                    response.headers['content-encoding'] = ''
+                  res.writeHead response.statusCode, response.headers
+                  res.end body
+                  if !resolvedBody?
+                    throw new Error('Empty Body')
+                  if response.statusCode == 200
+                    success = true
+                    if resolvedBody.api_result is 1
+                      resolvedBody = resolvedBody.api_data if resolvedBody.api_data?
+                      proxy.emit 'game.on.response', req.method, parsed.pathname, JSON.stringify(resolvedBody),  JSON.stringify(querystring.parse reqBody.toString())
+                  else
+                    success = true if response.statusCode == 403 || response.statusCode == 410
+                    proxy.emit 'network.invalid.code', response.statusCode
+                catch e
+                  error "Api failed: #{req.method} #{req.url} #{e.toString()}"
+                  proxy.emit 'network.error.retry', i + 1 if i < kcspRetries
+                # Delay 500ms for retry
+                yield Promise.delay(500) unless success
+            else
+              for i in [0..retries]
+                break if success
+                try
+                  # Emit request event to plugins
+                  proxy.emit 'game.on.request', req.method, parsed.pathname, JSON.stringify(querystring.parse reqBody.toString())
+                  # Create remote request
+                  [response, body] = yield requestAsync resolve options
                   success = true
-                  if resolvedBody.api_result is 1
-                    resolvedBody = resolvedBody.api_data if resolvedBody.api_data?
-                    proxy.emit 'game.on.response', req.method, parsed.pathname, JSON.stringify(resolvedBody),  JSON.stringify(querystring.parse reqBody.toString())
-                else
-                  success = true if response.statusCode == 403 || response.statusCode == 410
-                  proxy.emit 'network.invalid.code', response.statusCode
-              catch e
-                error "Api failed: #{req.method} #{req.url} #{e.toString()}"
-                proxy.emit 'network.error.retry', i + 1 if i < kcspRetries
-              # Delay 500ms for retry
-              yield Promise.delay(500) unless success
+                  # Emit response events to plugins
+                  resolvedBody = yield resolveBody response.headers['content-encoding'], body
+                  if parsed.pathname == '/kcsapi/api_start2' && config.get('plugin.iwukkp.shipgraph.enable', false)
+                    resolvedBody = modifyShipGraph resolvedBody
+                    body = 'svdata=' + JSON.stringify(resolvedBody)
+                    response.headers['content-encoding'] = ''
+                  res.writeHead response.statusCode, response.headers
+                  res.end body
+                  if !resolvedBody?
+                    throw new Error('Empty Body')
+                  if response.statusCode == 200
+                    if resolvedBody.api_result is 1
+                      resolvedBody = resolvedBody.api_data if resolvedBody.api_data?
+                      proxy.emit 'game.on.response', req.method, parsed.pathname, JSON.stringify(resolvedBody),  JSON.stringify(querystring.parse reqBody.toString())
+                  else if response.statusCode == 503
+                    throw new Error('Service unavailable')
+                  else
+                    proxy.emit 'network.invalid.code', response.statusCode
+                catch e
+                  error "Api failed: #{req.method} #{req.url} #{e.toString()}"
+                  proxy.emit 'network.error.retry', i + 1 if i < retries
+                # Delay 3s for retry
+                yield Promise.delay(3000) unless success
           else
-            for i in [0..retries]
-              break if success
-              try
-                # Emit request event to plugins
-                proxy.emit 'game.on.request', req.method, parsed.pathname, JSON.stringify(querystring.parse reqBody.toString())
-                # Create remote request
-                [response, body] = yield requestAsync resolve options
-                success = true
-                # Emit response events to plugins
-                resolvedBody = yield resolveBody response.headers['content-encoding'], body
-                if parsed.pathname == '/kcsapi/api_start2' && config.get('plugin.iwukkp.shipgraph.enable', false)
-                  resolvedBody = modifyShipGraph resolvedBody
-                  body = 'svdata=' + JSON.stringify(resolvedBody)
-                  response.headers['content-encoding'] = ''
-                res.writeHead response.statusCode, response.headers
-                res.end body
-                if !resolvedBody?
-                  throw new Error('Empty Body')
-                if response.statusCode == 200
-                  if resolvedBody.api_result is 1
-                    resolvedBody = resolvedBody.api_data if resolvedBody.api_data?
-                    proxy.emit 'game.on.response', req.method, parsed.pathname, JSON.stringify(resolvedBody),  JSON.stringify(querystring.parse reqBody.toString())
-                else if response.statusCode == 503
-                  throw new Error('Service unavailable')
-                else
-                  proxy.emit 'network.invalid.code', response.statusCode
-              catch e
-                error "Api failed: #{req.method} #{req.url} #{e.toString()}"
-                proxy.emit 'network.error.retry', i + 1 if i < retries
-              # Delay 3s for retry
-              yield Promise.delay(3000) unless success
+            [response, body] = yield requestAsync resolve options
+            res.writeHead response.statusCode, response.headers
+            res.end body
+          if parsed.pathname in ['/kcs/mainD2.swf', '/kcsapi/api_start2', '/kcsapi/api_get_member/basic']
+            proxy.emit 'game.start'
+          else if req.url.startsWith 'http://www.dmm.com/netgame/social/application/-/purchase/=/app_id=854854/payment_id='
+            proxy.emit 'game.payitem'
+        catch e
+          error "#{req.method} #{req.url} #{e.toString()}"
+          if req.url.startsWith('http://www.dmm.com/netgame/') or req.url.indexOf('/kcs/') != -1 or req.url.indexOf('/kcsapi/') != -1
+            proxy.emit 'network.error'
+    # HTTPS Requests
+    @server.on 'connect', (req, client, head) ->
+      delete req.headers['proxy-connection']
+      # Disable HTTP Keep-Alive
+      req.headers['connection'] = 'close'
+      remoteUrl = url.parse "https://#{req.url}"
+      remote = null
+      switch config.get 'proxy.use'
+        when 'socks5'
+          # Write data directly to SOCKS5 proxy
+          remote = socks.createConnection
+            socksHost: config.get 'proxy.socks5.host', '127.0.0.1'
+            socksPort: config.get 'proxy.socks5.port', 1080
+            host: remoteUrl.hostname
+            port: remoteUrl.port
+          remote.on 'connect', ->
+            client.write "HTTP/1.1 200 Connection Established\r\nConnection: close\r\n\r\n"
+            remote.write head
+          client.on 'data', (data) ->
+            remote.write data
+          remote.on 'data', (data) ->
+            client.write data
+        # Write data directly to HTTP proxy
+        when 'http'
+          host = config.get 'proxy.http.host', '127.0.0.1'
+          port = config.get 'proxy.http.port', 8118
+          # Write header to http proxy
+          msg = "CONNECT #{remoteUrl.hostname}:#{remoteUrl.port} HTTP/#{req.httpVersion}\r\n"
+          for k, v of req.headers
+            msg += "#{caseNormalizer(k)}: #{v}\r\n"
+          msg += "\r\n"
+          remote = net.connect port, host, ->
+            remote.write msg
+            remote.write head
+            client.pipe remote
+            remote.pipe client
+        # Connect to remote directly
         else
-          [response, body] = yield requestAsync resolve options
-          res.writeHead response.statusCode, response.headers
-          res.end body
-        if parsed.pathname in ['/kcs/mainD2.swf', '/kcsapi/api_start2', '/kcsapi/api_get_member/basic']
-          proxy.emit 'game.start'
-        else if req.url.startsWith 'http://www.dmm.com/netgame/social/application/-/purchase/=/app_id=854854/payment_id='
-          proxy.emit 'game.payitem'
-      catch e
-        error "#{req.method} #{req.url} #{e.toString()}"
-        if req.url.startsWith('http://www.dmm.com/netgame/') or req.url.indexOf('/kcs/') != -1 or req.url.indexOf('/kcsapi/') != -1
-          proxy.emit 'network.error'
-  # HTTPS Requests
-  server.on 'connect', (req, client, head) ->
-    delete req.headers['proxy-connection']
-    # Disable HTTP Keep-Alive
-    req.headers['connection'] = 'close'
-    remoteUrl = url.parse "https://#{req.url}"
-    remote = null
-    switch config.get 'proxy.use'
-      when 'socks5'
-        # Write data directly to SOCKS5 proxy
-        remote = socks.createConnection
-          socksHost: config.get 'proxy.socks5.host', '127.0.0.1'
-          socksPort: config.get 'proxy.socks5.port', 1080
-          host: remoteUrl.hostname
-          port: remoteUrl.port
-        remote.on 'connect', ->
-          client.write "HTTP/1.1 200 Connection Established\r\nConnection: close\r\n\r\n"
-          remote.write head
-        client.on 'data', (data) ->
-          remote.write data
-        remote.on 'data', (data) ->
-          client.write data
-      # Write data directly to HTTP proxy
-      when 'http'
-        host = config.get 'proxy.http.host', '127.0.0.1'
-        port = config.get 'proxy.http.port', 8118
-        # Write header to http proxy
-        msg = "CONNECT #{remoteUrl.hostname}:#{remoteUrl.port} HTTP/#{req.httpVersion}\r\n"
-        for k, v of req.headers
-          msg += "#{caseNormalizer(k)}: #{v}\r\n"
-        msg += "\r\n"
-        remote = net.connect port, host, ->
-          remote.write msg
-          remote.write head
-          client.pipe remote
-          remote.pipe client
-      # Connect to remote directly
-      else
-        remote = net.connect remoteUrl.port, remoteUrl.hostname, ->
-          client.write "HTTP/1.1 200 Connection Established\r\nConnection: close\r\n\r\n"
-          remote.write head
-          client.pipe remote
-          remote.pipe client
-    client.on 'end', ->
-      remote.end()
-    remote.on 'end', ->
-      client.end()
-    client.on 'error', (e) ->
-      error e
-      remote.destroy()
-    remote.on 'error', (e) ->
-      error e
-      client.destroy()
-    client.on 'timeout', ->
-      client.destroy()
-      remote.destroy()
-    remote.on 'timeout', ->
-      client.destroy()
-      remote.destroy()
-  server.on 'error', (err) ->
-    error err
-  server.timeout = 40 * 60 * 1000
-  webview = $('kan-game webview')
-  handleStopLoading = ->
-    webview.removeEventListener 'did-stop-loading', handleStopLoading
-    listenPort = proxy.server.address().port
-    proxy.server.close()
-    proxy.server = server
-    server.listen listenPort, '127.0.0.1', ->
-      log "Proxy restarted(iwukkp)"
-  webview.addEventListener 'did-stop-loading', handleStopLoading
+          remote = net.connect remoteUrl.port, remoteUrl.hostname, ->
+            client.write "HTTP/1.1 200 Connection Established\r\nConnection: close\r\n\r\n"
+            remote.write head
+            client.pipe remote
+            remote.pipe client
+      client.on 'end', ->
+        remote.end()
+      remote.on 'end', ->
+        client.end()
+      client.on 'error', (e) ->
+        error e
+        remote.destroy()
+      remote.on 'error', (e) ->
+        error e
+        client.destroy()
+      client.on 'timeout', ->
+        client.destroy()
+        remote.destroy()
+      remote.on 'timeout', ->
+        client.destroy()
+        remote.destroy()
+    @server.on 'error', (err) ->
+      error err
+    @server.timeout = 40 * 60 * 1000
+  start: ->
+    handleStopLoading = =>
+      webview.removeEventListener 'did-stop-loading', handleStopLoading
+      listenPort = originProxy.address().port
+      originProxy.close()
+      proxy.server = @server
+      @server.listen listenPort, '127.0.0.1', ->
+        log "Hackable proxy started."
+    webview.addEventListener 'did-stop-loading', handleStopLoading
+  stop: ->
+    handleStopLoading = =>
+      webview.removeEventListener 'did-stop-loading', handleStopLoading
+      listenPort = @server.address().port
+      @server.close()
+      proxy.server = originProxy
+      originProxy.listen listenPort, '127.0.0.1', ->
+        log "Origin proxy started."
+    webview.addEventListener 'did-stop-loading', handleStopLoading
+
+module.exports = new HackableProxy()
