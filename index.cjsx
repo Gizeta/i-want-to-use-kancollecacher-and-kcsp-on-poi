@@ -18,7 +18,7 @@ module.exports =
   description: 'Hack as much as the author needs.'
   author: 'Gizeta'
   link: 'https://github.com/Gizeta'
-  version: '0.1.0'
+  version: '0.2.0'
   show: false
   settingsClass: React.createClass
     getInitialState: ->
