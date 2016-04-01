@@ -4,21 +4,11 @@
 
 proxy = require './proxy'
 
-if POI_VERSION.match(/^[0-5]\./) && config.get('plugin.iwukkp.enable', true)
-  proxy.start()
-
 module.exports =
   pluginDidLoad: (e) ->
     proxy.start()
   pluginWillUnload: (e) ->
     proxy.stop()
-  name: 'iwukkp'
-  priority: 794
-  displayName: <span><FontAwesome name='eye' /> IWUKKP</span>
-  description: 'Hack as much as the author needs.'
-  author: 'Gizeta'
-  link: 'https://github.com/Gizeta'
-  version: '0.2.0'
   show: false
   settingsClass: React.createClass
     getInitialState: ->

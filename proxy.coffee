@@ -168,6 +168,9 @@ class HackableProxy
               res.end data
           # Enable retry for game api
           else if isGameApi
+            domain = req.headers.origin
+            pathname = parsed.pathname
+            requrl = req.url
             success = false
             useKcsp = config.get 'plugin.iwukkp.kcsp.enabled', false
             kcspHost = config.get 'plugin.iwukkp.kcsp.host', ''
@@ -181,12 +184,17 @@ class HackableProxy
                 break if success
                 try
                   # Emit request event to plugins
-                  proxy.emit 'game.on.request', req.method, parsed.pathname, JSON.stringify(querystring.parse reqBody.toString())
+                  reqBody = JSON.stringify(querystring.parse reqBody.toString())
+                  proxy.emit 'network.on.request', req.method, [domain, pathname, requrl], reqBody
                   # Create remote request
                   [response, body] = yield requestAsync resolve options
                   # Emit response events to plugins
-                  resolvedBody = yield resolveBody response.headers['content-encoding'], body
-                  if parsed.pathname == '/kcsapi/api_start2' && config.get('plugin.iwukkp.shipgraph.enable', false)
+                  try
+                    resolvedBody = yield resolveBody response.headers['content-encoding'], body
+                  catch e
+                    # Unresolveable binary files are not retried
+                    break
+                  if pathname == '/kcsapi/api_start2' && config.get('plugin.iwukkp.shipgraph.enable', false)
                     resolvedBody = modifyShipGraph resolvedBody
                     body = 'svdata=' + JSON.stringify(resolvedBody)
                     response.headers['content-encoding'] = ''
@@ -198,7 +206,7 @@ class HackableProxy
                     success = true
                     if resolvedBody.api_result is 1
                       resolvedBody = resolvedBody.api_data if resolvedBody.api_data?
-                      proxy.emit 'game.on.response', req.method, parsed.pathname, JSON.stringify(resolvedBody),  JSON.stringify(querystring.parse reqBody.toString())
+                      proxy.emit 'network.on.response', req.method, [domain, pathname, requrl], JSON.stringify(resolvedBody),  reqBody
                   else
                     success = true if response.statusCode == 403 || response.statusCode == 410
                     proxy.emit 'network.invalid.code', response.statusCode
@@ -212,24 +220,21 @@ class HackableProxy
                 break if success
                 try
                   # Emit request event to plugins
-                  proxy.emit 'game.on.request', req.method, parsed.pathname, JSON.stringify(querystring.parse reqBody.toString())
+                  reqBody = JSON.stringify(querystring.parse reqBody.toString())
+                  proxy.emit 'network.on.request', req.method, [domain, pathname, requrl], reqBody
                   # Create remote request
                   [response, body] = yield requestAsync resolve options
                   success = true
                   # Emit response events to plugins
-                  resolvedBody = yield resolveBody response.headers['content-encoding'], body
-                  if parsed.pathname == '/kcsapi/api_start2' && config.get('plugin.iwukkp.shipgraph.enable', false)
-                    resolvedBody = modifyShipGraph resolvedBody
-                    body = 'svdata=' + JSON.stringify(resolvedBody)
-                    response.headers['content-encoding'] = ''
-                  res.writeHead response.statusCode, response.headers
-                  res.end body
+                  try
+                    resolvedBody = yield resolveBody response.headers['content-encoding'], body
+                  catch e
+                    # Unresolveable binary files are not retried
+                    break
                   if !resolvedBody?
                     throw new Error('Empty Body')
                   if response.statusCode == 200
-                    if resolvedBody.api_result is 1
-                      resolvedBody = resolvedBody.api_data if resolvedBody.api_data?
-                      proxy.emit 'game.on.response', req.method, parsed.pathname, JSON.stringify(resolvedBody),  JSON.stringify(querystring.parse reqBody.toString())
+                    proxy.emit 'network.on.response', req.method, [domain, pathname, requrl], JSON.stringify(resolvedBody),  reqBody
                   else if response.statusCode == 503
                     throw new Error('Service unavailable')
                   else
@@ -243,14 +248,9 @@ class HackableProxy
             [response, body] = yield requestAsync resolve options
             res.writeHead response.statusCode, response.headers
             res.end body
-          if parsed.pathname in ['/kcs/mainD2.swf', '/kcsapi/api_start2', '/kcsapi/api_get_member/basic']
-            proxy.emit 'game.start'
-          else if req.url.startsWith 'http://www.dmm.com/netgame/social/application/-/purchase/=/app_id=854854/payment_id='
-            proxy.emit 'game.payitem'
         catch e
           error "#{req.method} #{req.url} #{e.toString()}"
-          if req.url.startsWith('http://www.dmm.com/netgame/') or req.url.indexOf('/kcs/') != -1 or req.url.indexOf('/kcsapi/') != -1
-            proxy.emit 'network.error'
+          proxy.emit 'network.error', [domain, pathname, requrl]
     # HTTPS Requests
     @server.on 'connect', (req, client, head) ->
       delete req.headers['proxy-connection']
