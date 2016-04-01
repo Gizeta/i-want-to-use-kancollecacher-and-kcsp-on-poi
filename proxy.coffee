@@ -204,9 +204,7 @@ class HackableProxy
                     throw new Error('Empty Body')
                   if response.statusCode == 200
                     success = true
-                    if resolvedBody.api_result is 1
-                      resolvedBody = resolvedBody.api_data if resolvedBody.api_data?
-                      proxy.emit 'network.on.response', req.method, [domain, pathname, requrl], JSON.stringify(resolvedBody),  reqBody
+                    proxy.emit 'network.on.response', req.method, [domain, pathname, requrl], JSON.stringify(resolvedBody), reqBody
                   else
                     success = true if response.statusCode == 403 || response.statusCode == 410
                     proxy.emit 'network.invalid.code', response.statusCode
