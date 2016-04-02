@@ -207,10 +207,10 @@ class HackableProxy
                     proxy.emit 'network.on.response', req.method, [domain, pathname, requrl], JSON.stringify(resolvedBody), reqBody
                   else
                     success = true if response.statusCode == 403 || response.statusCode == 410
-                    proxy.emit 'network.invalid.code', response.statusCode
+                    proxy.emit 'network.invalid.code', [domain, pathname, requrl], response.statusCode
                 catch e
                   error "Api failed: #{req.method} #{req.url} #{e.toString()}"
-                  proxy.emit 'network.error.retry', i + 1 if i < kcspRetries
+                  proxy.emit 'network.error.retry', [domain, pathname, requrl], i + 1 if i < retries
                 # Delay 500ms for retry
                 yield Promise.delay(500) unless success
             else
@@ -236,10 +236,10 @@ class HackableProxy
                   else if response.statusCode == 503
                     throw new Error('Service unavailable')
                   else
-                    proxy.emit 'network.invalid.code', response.statusCode
+                    proxy.emit 'network.invalid.code', [domain, pathname, requrl], response.statusCode
                 catch e
                   error "Api failed: #{req.method} #{req.url} #{e.toString()}"
-                  proxy.emit 'network.error.retry', i + 1 if i < retries
+                  proxy.emit 'network.error.retry', [domain, pathname, requrl], i + 1 if i < retries
                 # Delay 3s for retry
                 yield Promise.delay(3000) unless success
           else
