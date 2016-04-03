@@ -223,6 +223,8 @@ class HackableProxy
                   # Create remote request
                   [response, body] = yield requestAsync resolve options
                   success = true
+                  res.writeHead response.statusCode, response.headers
+                  res.end body
                   # Emit response events to plugins
                   try
                     resolvedBody = yield resolveBody response.headers['content-encoding'], body
