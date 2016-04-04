@@ -4,13 +4,10 @@ zlib = Promise.promisifyAll require 'zlib'
 url = require 'url'
 net = require 'net'
 http = require 'http'
-path = require 'path'
 querystring = require 'querystring'
 caseNormalizer = require 'header-case-normalizer'
-fs = Promise.promisifyAll require 'fs-extra'
 request = Promise.promisifyAll require 'request'
 requestAsync = Promise.promisify request, multiArgs: true
-mime = require 'mime'
 socks = require 'socks5-client'
 SocksHttpAgent = require 'socks5-http-client/lib/Agent'
 PacProxyAgent = require 'pac-proxy-agent'
@@ -38,36 +35,6 @@ resolveBody = (encoding, body) ->
       resolve decoded
     catch e
       reject e
-isStaticResource = (pathname) ->
-  return true if pathname.startsWith('/kcs/') && pathname.indexOf('Core.swf') == -1
-  return true if pathname.startsWith('/gadget/')
-  return true if pathname.startsWith('/kcscontents/')
-  return false
-getCachePath = (pathname) ->
-  dir = config.get 'poi.cachePath', remote.getGlobal('DEFAULT_CACHE_PATH')
-  path.join dir, pathname
-findHack = (pathname) ->
-  loc = getCachePath pathname
-  sp = loc.split '.'
-  ext = sp.pop()
-  sp.push 'hack'
-  sp.push ext
-  loc = sp.join '.'
-  try
-    fs.accessSync loc, fs.R_OK
-    return loc
-  catch
-    return null
-findCache = (pathname) ->
-  loc = getCachePath pathname
-  try
-    fs.accessSync loc, fs.R_OK
-    return loc
-  catch
-    return null
-
-# Network error retries
-retries = config.get 'poi.proxy.retries', 0
 
 PacAgents = {}
 resolve = (req) ->
@@ -117,20 +84,36 @@ modifyShipGraph = (resolvedBody) ->
     ship.api_getmes = data.api_getmes unless data.api_getmes == null
   return resolvedBody
 
+getRequestListener = ->
+  require('electron').app =
+    commandLine:
+      appendSwitch: ->
+        log "Cannot deal with commandLine in render process"
+  originProxy = process.mainModule.require('./lib/proxy')
+  originServer = originProxy.server
+  originServer.close()
+  originProxy.emit = proxy.emit
+  return originServer._events["request"]
+
+originRequestListener = getRequestListener()
+
 class HackableProxy
   constructor: ->
-    @load()
     @listenPort = proxy.port
+    @load()
   load: ->
     @server = http.createServer (req, res) ->
+      parsed = url.parse req.url
+      isGameApi = parsed.pathname.startsWith('/kcsapi') && req.method == 'POST'
+      useKcsp = config.get 'plugin.iwukkp.kcsp.enabled', false
+      kcspHost = config.get 'plugin.iwukkp.kcsp.host', ''
+      kcspPort = config.get 'plugin.iwukkp.kcsp.port', ''
+      unless isGameApi && useKcsp && kcspHost isnt '' && kcspPort isnt ''
+        originRequestListener(req, res)
+        return
       delete req.headers['proxy-connection']
       # Disable HTTP Keep-Alive
       req.headers['connection'] = 'close'
-      parsed = url.parse req.url
-      isGameApi = parsed.pathname.startsWith('/kcsapi') && req.method == 'POST'
-      cacheFile = null
-      if isStaticResource(parsed.pathname)
-        cacheFile = findHack(parsed.pathname) || findCache(parsed.pathname)
       reqBody = new Buffer(0)
       # Get all request body
       req.on 'data', (data) ->
@@ -148,106 +131,47 @@ class HackableProxy
           if reqBody.length > 0
             options = _.extend options,
               body: reqBody
-          # Use cache file
-          if cacheFile
-            stats = yield fs.statAsync cacheFile
-            # Cache is new
-            if req.headers['if-modified-since']? && (new Date(req.headers['if-modified-since']) >= stats.mtime)
-              res.writeHead 304,
-                'Server': 'nginx'
-                'Last-Modified': stats.mtime.toGMTString()
-              res.end()
-            # Cache is old
-            else
-              data = yield fs.readFileAsync cacheFile
-              res.writeHead 200,
-                'Server': 'nginx'
-                'Content-Length': data.length
-                'Content-Type': mime.lookup cacheFile
-                'Last-Modified': stats.mtime.toGMTString()
-              res.end data
-          # Enable retry for game api
-          else if isGameApi
-            domain = req.headers.origin
-            pathname = parsed.pathname
-            requrl = req.url
-            success = false
-            useKcsp = config.get 'plugin.iwukkp.kcsp.enabled', false
-            kcspHost = config.get 'plugin.iwukkp.kcsp.host', ''
-            kcspPort = config.get 'plugin.iwukkp.kcsp.port', ''
-            if useKcsp && kcspHost isnt '' && kcspPort isnt ''
-              kcspRetries = 500
-              options.headers['request-uri'] = options.url
-              options.headers['cache-token'] = uuid.v4()
-              options.url = options.url.replace(/:\/\/(.+?)\//, "://#{kcspHost}:#{kcspPort}/")
-              for i in [0..kcspRetries]
-                break if success
-                try
-                  # Emit request event to plugins
-                  reqBody = JSON.stringify(querystring.parse reqBody.toString())
-                  proxy.emit 'network.on.request', req.method, [domain, pathname, requrl], reqBody
-                  # Create remote request
-                  [response, body] = yield requestAsync resolve options
-                  # Emit response events to plugins
-                  try
-                    resolvedBody = yield resolveBody response.headers['content-encoding'], body
-                  catch e
-                    # Unresolveable binary files are not retried
-                    break
-                  if pathname == '/kcsapi/api_start2' && config.get('plugin.iwukkp.shipgraph.enable', false)
-                    resolvedBody = modifyShipGraph resolvedBody
-                    body = 'svdata=' + JSON.stringify(resolvedBody)
-                    response.headers['content-encoding'] = ''
-                  res.writeHead response.statusCode, response.headers
-                  res.end body
-                  if !resolvedBody?
-                    throw new Error('Empty Body')
-                  if response.statusCode == 200
-                    success = true
-                    proxy.emit 'network.on.response', req.method, [domain, pathname, requrl], JSON.stringify(resolvedBody), reqBody
-                  else
-                    success = true if response.statusCode == 403 || response.statusCode == 410
-                    proxy.emit 'network.invalid.code', [domain, pathname, requrl], response.statusCode
-                catch e
-                  error "Api failed: #{req.method} #{req.url} #{e.toString()}"
-                  proxy.emit 'network.error.retry', [domain, pathname, requrl], i + 1 if i < retries
-                # Delay 500ms for retry
-                yield Promise.delay(500) unless success
-            else
-              for i in [0..retries]
-                break if success
-                try
-                  # Emit request event to plugins
-                  reqBody = JSON.stringify(querystring.parse reqBody.toString())
-                  proxy.emit 'network.on.request', req.method, [domain, pathname, requrl], reqBody
-                  # Create remote request
-                  [response, body] = yield requestAsync resolve options
-                  success = true
-                  res.writeHead response.statusCode, response.headers
-                  res.end body
-                  # Emit response events to plugins
-                  try
-                    resolvedBody = yield resolveBody response.headers['content-encoding'], body
-                  catch e
-                    # Unresolveable binary files are not retried
-                    break
-                  if !resolvedBody?
-                    throw new Error('Empty Body')
-                  if response.statusCode == 200
-                    proxy.emit 'network.on.response', req.method, [domain, pathname, requrl], JSON.stringify(resolvedBody),  reqBody
-                  else if response.statusCode == 503
-                    throw new Error('Service unavailable')
-                  else
-                    proxy.emit 'network.invalid.code', [domain, pathname, requrl], response.statusCode
-                catch e
-                  error "Api failed: #{req.method} #{req.url} #{e.toString()}"
-                  proxy.emit 'network.error.retry', [domain, pathname, requrl], i + 1 if i < retries
-                # Delay 3s for retry
-                yield Promise.delay(3000) unless success
-          else
-            [response, body] = yield requestAsync resolve options
-            res.writeHead response.statusCode, response.headers
-            res.end body
+          domain = req.headers.origin
+          pathname = parsed.pathname
+          requrl = req.url
+          success = false
+          retries = 500
+          options.headers['request-uri'] = options.url
+          options.headers['cache-token'] = uuid.v4()
+          options.url = options.url.replace(/:\/\/(.+?)\//, "://#{kcspHost}:#{kcspPort}/")
+          for i in [0..retries]
+            break if success
+            try
+              # Emit request event to plugins
+              reqBody = JSON.stringify(querystring.parse reqBody.toString())
+              proxy.emit 'network.on.request', req.method, [domain, pathname, requrl], reqBody
+              # Create remote request
+              [response, body] = yield requestAsync resolve options
+              # Emit response events to plugins
+              try
+                resolvedBody = yield resolveBody response.headers['content-encoding'], body
+              catch e
+                # Unresolveable binary files are not retried
+                break
+              if pathname == '/kcsapi/api_start2' && config.get('plugin.iwukkp.shipgraph.enable', false)
+                resolvedBody = modifyShipGraph resolvedBody
+                body = 'svdata=' + JSON.stringify(resolvedBody)
+                response.headers['content-encoding'] = ''
+              res.writeHead response.statusCode, response.headers
+              res.end body
+              if !resolvedBody?
+                throw new Error('Empty Body')
+              if response.statusCode == 200
+                success = true
+                proxy.emit 'network.on.response', req.method, [domain, pathname, requrl], JSON.stringify(resolvedBody), reqBody
+              else
+                success = true if response.statusCode == 403 || response.statusCode == 410
+                proxy.emit 'network.error', [domain, pathname, requrl], response.statusCode
+            catch e
+              error "Api failed: #{req.method} #{req.url} #{e.toString()}"
+              proxy.emit 'network.error.retry', [domain, pathname, requrl], i + 1 if i < retries
+            # Delay 1000ms for retry
+            yield Promise.delay(1000) unless success
         catch e
           error "#{req.method} #{req.url} #{e.toString()}"
           proxy.emit 'network.error', [domain, pathname, requrl]
@@ -315,9 +239,8 @@ class HackableProxy
     @server.timeout = 40 * 60 * 1000
   startup: ->
     proxy.server.close()
-    proxy.server = @server
     @server.listen @listenPort, '127.0.0.1', ->
-      log "Hackable proxy started."
+      log "Hackable proxy started"
   start: ->
     if webview.isLoading()
       handleStopLoading = =>
@@ -330,6 +253,6 @@ class HackableProxy
     @server.close()
     proxy.load().close()
     proxy.server.listen @listenPort, '127.0.0.1', ->
-      log "Origin proxy started."
+      log "Origin proxy started"
 
 module.exports = new HackableProxy()
