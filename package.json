@@ -1,6 +1,6 @@
 {
   "name": "poi-plugin-iwukkp",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "description": "i want to use kancollecacher and kcsp on poi",
   "main": "index.cjsx",
   "author": {
